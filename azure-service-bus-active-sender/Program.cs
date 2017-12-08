@@ -13,23 +13,49 @@ namespace azure_service_bus_active_sender
 
         static void Main(string[] args)
         {
-            var s = new DataSender(primarySb, secondarySb);
+            var sbClients = new List<ActiveReplicationQueueClient>()
+            {
+                new ActiveReplicationQueueClient(primarySb, "events", true),
+                new ActiveReplicationQueueClient(secondarySb, "events", false),
+            };
+            var s = new DataSender(sbClients);
             Task.WaitAll(s.SendOrderedMessages("1", "2", "3"));
             Console.WriteLine("all finished");
             Console.ReadLine();
         }
     }
 
+    public class ActiveReplicationQueueClient : QueueClient
+    {
+        public bool IsPrimaryQueue { get; set; }
+        public string Namespace { get; set; }
+        public string ClientRef { get; set; }
+
+        public ActiveReplicationQueueClient(ServiceBusConnectionStringBuilder connectionStringBuilder, bool isPrimary = true, ReceiveMode receiveMode = ReceiveMode.PeekLock, RetryPolicy retryPolicy = null) : base(connectionStringBuilder, receiveMode, retryPolicy)
+        {
+            IsPrimaryQueue = isPrimary;
+            Namespace = connectionStringBuilder.Endpoint;
+        }
+
+        public ActiveReplicationQueueClient(string connectionString, string entityPath, bool isPrimary = true, ReceiveMode receiveMode = ReceiveMode.PeekLock, RetryPolicy retryPolicy = null) : base(connectionString, entityPath, receiveMode, retryPolicy)
+        {
+            IsPrimaryQueue = isPrimary;
+            var sb = connectionString.Split('=')[1];
+            if (Uri.TryCreate(sb, UriKind.Absolute, out Uri endpoint))
+            {
+                Namespace = endpoint.Host;
+            }
+        }
+    }
+
     public class DataSender
     {
-        private List<QueueClient> _clients;
+        private List<ActiveReplicationQueueClient> _clients;
 
-        public DataSender(List<QueueClient> clients)
+        public DataSender(List<ActiveReplicationQueueClient> clients)
         {
             _clients = clients;
         }
-
-        public DataSender(params string[] queueEndpoints) : this(queueEndpoints.Select(x => new QueueClient(x, "events")).ToList()) { }
 
         public async Task SendOrderedMessages(params string[] messages)
         {
@@ -37,10 +63,14 @@ namespace azure_service_bus_active_sender
             var timestamp = DateTime.UtcNow;
 
             Console.WriteLine($"Sending session {sessionId} at {timestamp.ToString("o")}");
-            var msg = messages.Select(x => new Message(System.Text.Encoding.UTF8.GetBytes($"{DateTime.UtcNow.ToString("o")}-{x}")) { SessionId = sessionId }).ToList();
+            var msg = messages.Select(x => new Message(System.Text.Encoding.UTF8.GetBytes($"{DateTime.UtcNow.ToString("o")}-{x}")) { SessionId = sessionId, MessageId = Guid.NewGuid().ToString() }).ToList();
 
             foreach (var c in _clients)
             {
+                foreach (var m in msg)
+                {
+                    m.UserProperties.Add("IsPrimary", c.IsPrimaryQueue);
+                }
                 await c.SendAsync(msg);
                 Console.WriteLine($"Sent messages to {c.Path}");
             }
