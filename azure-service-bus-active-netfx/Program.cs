@@ -1,9 +1,10 @@
-﻿using Microsoft.ServiceBus;
+﻿using Microsoft.Azure.CosmosDB.Table;
+using Microsoft.Azure.Storage;
 using Microsoft.ServiceBus.Messaging;
-using Microsoft.WindowsAzure.Storage;
-using Microsoft.WindowsAzure.Storage.Table;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -23,10 +24,10 @@ namespace azure_service_bus_active_netfx
             var sbClients = new List<QueueClient>()
             {
                 QueueClient.CreateFromConnectionString(primarySb, "events"),
-                QueueClient.CreateFromConnectionString(secondarySb, "events")
+                //QueueClient.CreateFromConnectionString(secondarySb, "events")
             };
 
-            var r = new DataReceiver(table, sbClients);
+            var r = new DataReceiver(sbClients);
             r.ReceiveMessage();
             Console.WriteLine("Waiting...");
             Console.ReadLine();
@@ -64,6 +65,14 @@ namespace azure_service_bus_active_netfx
 
     public class ClientAwareSessionHandler : IMessageSessionAsyncHandler
     {
+        CloudTable _table;
+        private const string storage = "DefaultEndpointsProtocol=https;AccountName=sbjournal;AccountKey=exbkLArPQAXx9IEgh9cdMqGyBaAfGSAMYDN47tXzifz1BLqaqTF0uNGXE0O9yVDEEbcIHNM9yA5bzbb0Nvj2Gg==;TableEndpoint=https://sbjournal.table.cosmosdb.azure.com:443/;";
+        public ClientAwareSessionHandler()
+        {
+            var account = CloudStorageAccount.Parse(storage);
+            var table = account.CreateCloudTableClient().GetTableReference("events");
+            _table = table;
+        }
         public Task OnCloseSessionAsync(MessageSession session)
         {
             throw new NotImplementedException();
@@ -84,37 +93,40 @@ namespace azure_service_bus_active_netfx
             //    Console.ForegroundColor = ConsoleColor.Yellow;
             //}
 
-            //Console.WriteLine($"{session.ClientId} Session received; Enqueued Time: {enqueuedTime}, Receipt Time: {receiptTime}, Drift: {drift}");
-            //Console.WriteLine($"Received Session: {session.SessionId} message: SequenceNumber: {message.SystemProperties.SequenceNumber} Body:{Encoding.UTF8.GetString(message.Body)}");
+            Console.WriteLine($"Session received; Enqueued Time: {enqueuedTime}, Receipt Time: {receiptTime}, Drift: {drift}");
+            var stream = message.GetBody<Stream>();
+            var reader = new StreamReader(stream);
+            var body = reader.ReadToEnd();
+            Console.WriteLine($"Received Session: {session.SessionId} message: SequenceNumber: {message.SequenceNumber} Body:{body}");
 
-            //var messageStatus = await GetMessageFromLog(session.SessionId, message.MessageId);
-            //if (messageStatus == null) // no record exists, so let's create one and start working
-            //{
-            //    var w = new WorkItem(session.SessionId, message.MessageId)
-            //    {
-            //        Status = WorkItemStatus.Working,
-            //        LocalArrivalTime = receiptTime,
-            //        WorkerIdentity = client.ClientId,
-            //        SequenceNumber = message.SystemProperties.SequenceNumber,
-            //    };
-            //    var sw = new Stopwatch();
-            //    sw.Start();
-            //    var workItem = await AddWorkItemToLog(w);
-            //    sw.Stop();
-            //    Console.WriteLine($"Took {sw.ElapsedMilliseconds}ms to write to log");
-            //    if (workItem.CanProcess)
-            //    {
-            //        await ProcessMessage(message);
-            //    }
-            //}
-            //else //record exists, so let's interrogate it 
-            //{
-            //    Console.WriteLine($"{messageStatus.SessionId} {messageStatus.MessageId} currently {messageStatus.Status} by {messageStatus.WorkerIdentity}; CanProcess? {messageStatus.CanProcess}");
-            //    if (messageStatus.CanProcess)
-            //    {
-            //        Console.WriteLine("I can do work");
-            //    }
-            //}
+            var messageStatus = await GetMessageFromLog(session.SessionId, message.MessageId);
+            if (messageStatus == null) // no record exists, so let's create one and start working
+            {
+                var w = new WorkItem(session.SessionId, message.MessageId)
+                {
+                    Status = WorkItemStatus.Working,
+                    LocalArrivalTime = receiptTime,
+                    //WorkerIdentity = client.ClientId,
+                    SequenceNumber = message.SequenceNumber,
+                };
+                var sw = new Stopwatch();
+                sw.Start();
+                var workItem = await AddWorkItemToLog(w);
+                sw.Stop();
+                Console.WriteLine($"Took {sw.ElapsedMilliseconds}ms to write to log");
+                if (workItem.CanProcess)
+                {
+                    await ProcessMessage(message);
+                }
+            }
+            else //record exists, so let's interrogate it 
+            {
+                Console.WriteLine($"{messageStatus.SessionId} {messageStatus.MessageId} currently {messageStatus.Status} by {messageStatus.WorkerIdentity}; CanProcess? {messageStatus.CanProcess}");
+                if (messageStatus.CanProcess)
+                {
+                    Console.WriteLine("I can do work");
+                }
+            }
             await session.CompleteAsync(message.LockToken);
         }
 
@@ -122,61 +134,23 @@ namespace azure_service_bus_active_netfx
         {
             throw new NotImplementedException();
         }
-    }
 
-    public class DataReceiver
-    {
-        private List<QueueClient> _clients;
-        private CloudTable _table;
-
-        public DataReceiver(CloudTable table, List<QueueClient> clients)
+        public async Task ProcessMessage(BrokeredMessage message)
         {
-            _clients = clients;
-            _table = table;
+            await Task.Delay(10000);
         }
-
-        public void ReceiveMessage()
-        {
-            var opts = new SessionHandlerOptions()
-            {
-                AutoComplete = false,
-                AutoRenewTimeout = TimeSpan.FromSeconds(120),
-                MaxConcurrentSessions = 2,
-                MessageWaitTimeout = TimeSpan.FromSeconds(30)
-            };
-
-            foreach (var c in _clients)
-            {
-                c.RegisterSessionHandler(typeof(ClientAwareSessionHandler));
-                //c.RegisterSessionHandler(ProcessSessionMessagesAsync, opts);
-            }
-        }
-
-        //public async Task ProcessSessionMessagesAsync(IMessageSession session, Message message, CancellationToken token)
-        //{
-
-        //}
-
-        //public static Task ExceptionReceivedHandler(ExceptionReceivedEventArgs x)
-        //{
-        //    Console.BackgroundColor = ConsoleColor.Red;
-        //    Console.WriteLine($"{DateTime.UtcNow.ToString("o")}:{x.ExceptionReceivedContext.Endpoint}:{x.ExceptionReceivedContext.Action}:{x.Exception.Message}");
-        //    return Task.CompletedTask;
-        //}
 
         public async Task<WorkItem> GetMessageFromLog(string sessionId, string messageId)
         {
-            var query = new TableQuery<WorkItem>().Where(TableQuery.CombineFilters(TableQuery.GenerateFilterCondition("PartitionKey", QueryComparisons.Equal, sessionId), TableOperators.And, TableQuery.GenerateFilterCondition("RowKey", QueryComparisons.Equal, messageId)));
-            var results = await _table.ExecuteQuerySegmentedAsync(query, null); // should loop here if potentially a single session has > 1000 messages
-            if (results.Any())
+            var retrieveOperation = TableOperation.Retrieve<WorkItem>(sessionId, messageId);
+            var result = await _table.ExecuteAsync(retrieveOperation);
+            if (result.HttpStatusCode < 205)
             {
-                foreach (var r in results)
-                {
-                    Console.WriteLine($"Receive Time: {r.Timestamp} Found message {r.MessageId} in session {r.SessionId}: {r.Status}");
-                }
-                return results.Single();
+                var r = (WorkItem)result.Result;
+                Console.WriteLine($"Receive Time: {r.Timestamp} Found message {r.MessageId} in session {r.SessionId}: {r.Status}");
+                return r;
             }
-            return null;
+            else return null;
         }
 
         public async Task<WorkItem> AddWorkItemToLog(WorkItem item)
@@ -206,11 +180,41 @@ namespace azure_service_bus_active_netfx
             }
             return item;
         }
+    }
 
-        //public async Task ProcessMessage(Message message)
-        //{
-        //    await Task.Delay(10000);
-        //}
+    public class TableOps
+    {
+        private CloudTable _table;
+        public TableOps(CloudTable table)
+        {
+            _table = table;
+        }
+    }
+
+    public class DataReceiver
+    {
+        private List<QueueClient> _clients;
+
+        public DataReceiver(List<QueueClient> clients)
+        {
+            _clients = clients;
+        }
+
+        public void ReceiveMessage()
+        {
+            var opts = new SessionHandlerOptions()
+            {
+                AutoComplete = false,
+                AutoRenewTimeout = TimeSpan.FromSeconds(120),
+                MaxConcurrentSessions = 2,
+                MessageWaitTimeout = TimeSpan.FromSeconds(30)
+            };
+
+            foreach (var c in _clients)
+            {
+                c.RegisterSessionHandler(typeof(ClientAwareSessionHandler));
+            }
+        }
     }
 
     public class WorkItem : TableEntity
