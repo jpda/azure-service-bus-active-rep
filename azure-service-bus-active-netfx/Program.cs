@@ -119,10 +119,6 @@ namespace azure_service_bus_active_netfx
                 sw.Start();
                 var workItem = await AddWorkItemToLog(w);
                 sw.Stop();
-                if (workItem.ETag
-                {
-
-                }
                 Console.WriteLine($"Took {sw.ElapsedMilliseconds}ms to write to log");
                 await ProcessMessage(message);
             }

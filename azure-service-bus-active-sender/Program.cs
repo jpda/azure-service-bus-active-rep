@@ -14,18 +14,23 @@ namespace azure_service_bus_active_sender
             var sbClients = new List<ActiveReplicationQueueClient>()
             {
                 new ActiveReplicationQueueClient(primarySb, "events", true),
-                //new ActiveReplicationQueueClient(secondarySb, "events", false),
+                new ActiveReplicationQueueClient(secondarySb, "events", false),
             };
             var s = new DataSender(sbClients);
-            Task.WaitAll(s.SendOrderedMessages("1"));//, "2", "3"));
             var more = false;
             do
             {
-                Console.WriteLine("again?");
+                Console.WriteLine("How many?");
                 var response = Console.ReadLine();
-                if (response.ToLower().Contains("y"))
+                if (int.TryParse(response, out var iterations))
                 {
-                    Task.WaitAll(s.SendOrderedMessages("1"));
+                    var messages = new List<string>();
+                    var sessionId = Guid.NewGuid().ToString();
+                    for (var i = 0; i < iterations; i++)
+                    {
+                        messages.Add($"{i}");
+                        Task.WaitAll(s.SendOrderedMessages(sessionId, messages.ToArray()));
+                    }
                     more = true;
                 }
                 else

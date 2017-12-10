@@ -15,9 +15,9 @@ namespace azure_service_bus_active_sender
             _clients = clients;
         }
 
-        public async Task SendOrderedMessages(params string[] messages)
+        public async Task SendOrderedMessages(string sessionId, params string[] messages)
         {
-            var sessionId = Guid.NewGuid().ToString();
+            //var sessionId = Guid.NewGuid().ToString();
             var timestamp = DateTime.UtcNow;
 
             Console.WriteLine($"Sending session {sessionId} at {timestamp.ToString("o")}");
@@ -27,11 +27,20 @@ namespace azure_service_bus_active_sender
             {
                 foreach (var m in msg)
                 {
-                    if (m.UserProperties.ContainsKey("IsPrimary")) continue;
-                    m.UserProperties.Add("IsPrimary", c.IsPrimaryQueue);
+                    if (!c.IsPrimaryQueue)
+                    {
+                        m.ScheduledEnqueueTimeUtc = DateTime.UtcNow.AddSeconds(5);
+                    }
+                    if (m.UserProperties.ContainsKey("IsPrimary"))
+                    {
+                        m.UserProperties["IsPrimary"] = c.IsPrimaryQueue;
+                    }
+                    else
+                    {
+                        m.UserProperties.Add("IsPrimary", c.IsPrimaryQueue);
+                    }
                 }
                 await c.SendAsync(msg);
-                Console.WriteLine($"Sent messages to {c.Path}");
             }
         }
     }
