@@ -24,7 +24,7 @@ namespace azure_service_bus_active_netfx
             var sbClients = new List<QueueClient>()
             {
                 QueueClient.CreateFromConnectionString(primarySb, "events"),
-                //QueueClient.CreateFromConnectionString(secondarySb, "events")
+                QueueClient.CreateFromConnectionString(secondarySb, "events")
             };
 
             var r = new DataReceiver(sbClients);
@@ -67,22 +67,27 @@ namespace azure_service_bus_active_netfx
     {
         CloudTable _table;
         private const string storage = "DefaultEndpointsProtocol=https;AccountName=sbjournal;AccountKey=exbkLArPQAXx9IEgh9cdMqGyBaAfGSAMYDN47tXzifz1BLqaqTF0uNGXE0O9yVDEEbcIHNM9yA5bzbb0Nvj2Gg==;TableEndpoint=https://sbjournal.table.cosmosdb.azure.com:443/;";
+        private string _localId;
         public ClientAwareSessionHandler()
         {
             var account = CloudStorageAccount.Parse(storage);
             var table = account.CreateCloudTableClient().GetTableReference("events");
             _table = table;
+            _localId = Guid.NewGuid().ToString();
+            Console.WriteLine($"Worker {_localId} starting up...");
         }
         public Task OnCloseSessionAsync(MessageSession session)
         {
-            throw new NotImplementedException();
+            Console.WriteLine($"Session {session.SessionId} closed");
+            return Task.CompletedTask;
         }
 
         public async Task OnMessageAsync(MessageSession session, BrokeredMessage message)
         {
             var receiptTime = DateTime.UtcNow;
-            var enqueuedTime = message.ScheduledEnqueueTimeUtc;
+            var enqueuedTime = message.EnqueuedTimeUtc;
             var drift = receiptTime - enqueuedTime;
+
             //var client = _clients.Single(x => x.ClientRef == session.ClientId);
             //if (client.IsPrimaryQueue)
             //{
@@ -107,17 +112,19 @@ namespace azure_service_bus_active_netfx
                     Status = WorkItemStatus.Working,
                     LocalArrivalTime = receiptTime,
                     //WorkerIdentity = client.ClientId,
+                    WorkerIdentity = _localId,
                     SequenceNumber = message.SequenceNumber,
                 };
                 var sw = new Stopwatch();
                 sw.Start();
                 var workItem = await AddWorkItemToLog(w);
                 sw.Stop();
-                Console.WriteLine($"Took {sw.ElapsedMilliseconds}ms to write to log");
-                if (workItem.CanProcess)
+                if (workItem.ETag
                 {
-                    await ProcessMessage(message);
+
                 }
+                Console.WriteLine($"Took {sw.ElapsedMilliseconds}ms to write to log");
+                await ProcessMessage(message);
             }
             else //record exists, so let's interrogate it 
             {
@@ -125,14 +132,19 @@ namespace azure_service_bus_active_netfx
                 if (messageStatus.CanProcess)
                 {
                     Console.WriteLine("I can do work");
+                    await session.CompleteAsync(message.LockToken);
+                }
+                else
+                {
+                    await message.AbandonAsync();
                 }
             }
-            await session.CompleteAsync(message.LockToken);
         }
 
         public Task OnSessionLostAsync(Exception exception)
         {
-            throw new NotImplementedException();
+            Console.WriteLine(exception.Message);
+            return Task.CompletedTask;
         }
 
         public async Task ProcessMessage(BrokeredMessage message)
@@ -165,7 +177,7 @@ namespace azure_service_bus_active_netfx
             if (result.HttpStatusCode > 204)
             {
                 //check this
-                return result.Result as WorkItem;
+                throw new Exception("Stop processing");
             }
             return item; // returns original item
         }
