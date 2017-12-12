@@ -1,7 +1,7 @@
 ﻿using Microsoft.Azure.ServiceBus;
 using System;
 
-namespace azure_service_bus_active_receiver
+namespace azure_service_bus_active_receiver_lib
 {
     public class ActiveReplicationQueueClient : QueueClient
     {

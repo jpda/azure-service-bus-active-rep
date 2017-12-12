@@ -1,4 +1,4 @@
-﻿namespace azure_service_bus_active_receiver
+﻿namespace azure_service_bus_active_receiver_lib
 {
     public enum WorkItemStatus
     {

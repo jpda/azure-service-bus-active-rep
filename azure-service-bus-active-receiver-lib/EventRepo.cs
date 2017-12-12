@@ -7,9 +7,9 @@ using Microsoft.Azure.Documents;
 using Microsoft.Azure.Documents.Client;
 using Microsoft.Azure.Documents.Linq;
 
-namespace azure_service_bus_active_receiver
+namespace azure_service_bus_active_receiver_lib
 {
-    public class EventRepo<T> where T : class
+    public class EventRepo<T> : IEventRepo<T> where T : class
     {
         private DocumentClient _client;
         private string _databaseId;
@@ -24,10 +24,10 @@ namespace azure_service_bus_active_receiver
 
         public async Task<T> GetEventAsync(string sessionId, string messageId)
         {
-            return await GetItemAsync(WorkItem.GenerateId(sessionId, messageId));
+            return await GetEventAsync(WorkItem.GenerateId(sessionId, messageId));
         }
 
-        public async Task<T> GetItemAsync(string id)
+        public async Task<T> GetEventAsync(string id)
         {
             try
             {
@@ -47,7 +47,7 @@ namespace azure_service_bus_active_receiver
             }
         }
 
-        public async Task<IEnumerable<T>> GetItemsAsync(Expression<Func<T, bool>> predicate)
+        public async Task<IEnumerable<T>> GetEventsAsync(Expression<Func<T, bool>> predicate)
         {
             IDocumentQuery<T> query = _client.CreateDocumentQuery<T>(
                 UriFactory.CreateDocumentCollectionUri(_databaseId, _collectionId),
@@ -64,19 +64,19 @@ namespace azure_service_bus_active_receiver
             return results;
         }
 
-        public async Task<Document> CreateItemAsync(T item)
+        public async Task<Document> CreateEventAsync(T item)
         {
             var response = await _client.CreateDocumentAsync(UriFactory.CreateDocumentCollectionUri(_databaseId, _collectionId), item);
             return response.Resource;
         }
 
-        public async Task<Document> UpdateItemAsync(string id, T item)
+        public async Task<Document> UpdateEventAsync(string id, T item)
         {
             var response = await _client.ReplaceDocumentAsync(UriFactory.CreateDocumentUri(_databaseId, _collectionId, id), item);
             return response.Resource;
         }
 
-        public async Task DeleteItemAsync(string id)
+        public async Task DeleteEventAsync(string id)
         {
             await _client.DeleteDocumentAsync(UriFactory.CreateDocumentUri(_databaseId, _collectionId, id));
         }

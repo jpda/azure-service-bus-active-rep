@@ -2,7 +2,7 @@
 using Microsoft.Azure.Documents;
 using Newtonsoft.Json;
 
-namespace azure_service_bus_active_receiver
+namespace azure_service_bus_active_receiver_lib
 {
     public class WorkItem
     {

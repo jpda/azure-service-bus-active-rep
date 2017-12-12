@@ -4,40 +4,51 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Threading;
-using System.Text;
 using System.Diagnostics;
-using Microsoft.Azure.Documents.Client;
 
-namespace azure_service_bus_active_receiver
+namespace azure_service_bus_active_receiver_lib
 {
-    public class DataReceiver
-    {
-        private List<ActiveReplicationQueueClient> _clients;
-        private EventRepo<WorkItem> _events;
 
-        public DataReceiver(EventRepo<WorkItem> events, List<ActiveReplicationQueueClient> clients)
+    public class DataReceiverEvents
+    {
+        public Func<IMessageSession, Message, Task> WorkItemCompletedAction { get; set; }
+    }
+
+    public class DataReceiver<T>
+    {
+        private IList<ActiveReplicationQueueClient> _clients;
+        private IEventRepo<WorkItem> _events;
+        private Func<Message, Task> _messageProcessAction;
+        private SessionHandlerOptions _sessionOptions;
+        private IDictionary<WorkItemStatus, Func<IMessageSession, Message, Task>> _workItemStatusAction;
+
+        public DataReceiver(IEventRepo<WorkItem> events, IList<ActiveReplicationQueueClient> clients, Func<Message, Task> messageProcessAction, SessionHandlerOptions sessionOptions = null)
         {
             _events = events;
             _clients = clients;
+            _messageProcessAction = messageProcessAction;
+            if (sessionOptions == null)
+            {
+                sessionOptions = new SessionHandlerOptions(ExceptionReceivedHandler)
+                {
+                    AutoComplete = false,
+                    MaxAutoRenewDuration = TimeSpan.FromSeconds(120),
+                    MaxConcurrentSessions = 10,
+                    MessageWaitTimeout = TimeSpan.FromSeconds(30)
+                };
+            }
+            _sessionOptions = sessionOptions;
         }
 
-        public void ReceiveMessage()
+        public void Start()
         {
-            var opts = new SessionHandlerOptions(ExceptionReceivedHandler)
-            {
-                AutoComplete = false,
-                MaxAutoRenewDuration = TimeSpan.FromSeconds(120),
-                MaxConcurrentSessions = 10,
-                MessageWaitTimeout = TimeSpan.FromSeconds(30)
-            };
-
             foreach (var c in _clients)
             {
-                c.RegisterSessionHandler(ProcessSessionMessagesAsync, opts);
+                c.RegisterSessionHandler(ProcessSessionMessagesAsync, _sessionOptions);
             }
         }
 
-        public async Task ProcessSessionMessagesAsync(IMessageSession session, Message message, CancellationToken token)
+        private async Task ProcessSessionMessagesAsync(IMessageSession session, Message message, CancellationToken token)
         {
             var isPrimary = message.UserProperties.ContainsKey("IsPrimary") ? (bool)message.UserProperties.Single(x => x.Key == "IsPrimary").Value : true;
             var receiptTime = DateTime.UtcNow;
@@ -58,15 +69,20 @@ namespace azure_service_bus_active_receiver
             do
             {
                 // todo: introduce delay manager here for retry backoff
+
                 var workItem = await CheckForExistingWorkItem(session, message);
-                Console.WriteLine($"{workItem.SessionId} {workItem.MessageId}: {workItem.Status}");
+                Trace.TraceInformation($"{workItem.SessionId} {workItem.MessageId}: {workItem.Status}");
+
+                // todo: should also probably make this extensible so each action can be customized
+                //await _workItemStatusAction[workItem.Status](session, message);
+
                 switch (workItem.Status)
                 {
                     case WorkItemStatus.Completed:
                         await session.CompleteAsync(message.SystemProperties.LockToken);
                         return;
                     case WorkItemStatus.Working:
-                        Console.WriteLine($"Work item shows as in progress, waiting {loop} sec to recheck");
+                        Trace.TraceInformation($"Work item shows as in progress, waiting {loop} sec to recheck");
                         loop++;
                         wait = true;
                         await Task.Delay(loop * 1000);
@@ -91,17 +107,17 @@ namespace azure_service_bus_active_receiver
                         }
                         catch (Exception ex) //todo: put this into a loop; faulted due to conflict, pause and re-check
                         {
-                            Console.WriteLine($"Concurrency error: {ex.Message}");
+                            Trace.TraceError($"Data conflict: {ex.Message}");
                             wait = true;
                             break;
                         }
                         try
                         {
-                            await ProcessMessage(message);
+                            await ProcessMessageAsync(message);
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine(ex.Message);
+                            Trace.TraceError(ex.Message);
                             workItem.Status = WorkItemStatus.Faulted;
                             return;
                         }
@@ -118,41 +134,39 @@ namespace azure_service_bus_active_receiver
         private async Task<WorkItem> CheckForExistingWorkItem(IMessageSession session, Message message)
         {
             // if the work item doesn't exist in the database, we'll get a stub listed as unassigned
-            var workItem = await GetMessageFromLog(session.SessionId, message.MessageId);
-            Console.WriteLine($"{workItem.SessionId} {workItem.MessageId} currently {workItem.Status}; CanProcess? {workItem.CanProcess}");
-
+            var workItem = await GetEventFromLog(session.SessionId, message.MessageId);
+            Trace.TraceInformation($"{workItem.SessionId} {workItem.MessageId} currently {workItem.Status}; CanProcess? {workItem.CanProcess}");
             return workItem;
         }
 
-        public static Task ExceptionReceivedHandler(ExceptionReceivedEventArgs x)
+        private static Task ExceptionReceivedHandler(ExceptionReceivedEventArgs x)
         {
-            Console.BackgroundColor = ConsoleColor.Red;
-            Console.WriteLine($"{DateTime.UtcNow.ToString("o")}:{x.ExceptionReceivedContext.Endpoint}:{x.ExceptionReceivedContext.Action}:{x.Exception.Message}");
+            Trace.TraceError($"{DateTime.UtcNow.ToString("o")}:{x.ExceptionReceivedContext.Endpoint}:{x.ExceptionReceivedContext.Action}:{x.Exception.Message}");
             return Task.CompletedTask;
         }
 
-        public async Task<WorkItem> GetMessageFromLog(string sessionId, string messageId)
+        private async Task<WorkItem> GetEventFromLog(string sessionId, string messageId)
         {
             var thing = await _events.GetEventAsync(sessionId, messageId);
-            return thing == null ? new WorkItem(sessionId, messageId, WorkItemStatus.Unassigned) : thing;
+            return thing ?? new WorkItem(sessionId, messageId, WorkItemStatus.Unassigned);
         }
 
-        public async Task<string> AddWorkItemToLog(WorkItem item)
+        private async Task<string> AddWorkItemToLog(WorkItem item)
         {
             item.Status = WorkItemStatus.Working;
-            var doc = await _events.CreateItemAsync(item);
-            return doc.Id; // returns original item
-        }
-
-        public async Task<string> UpdateWorkItem(string docId, WorkItem item)
-        {
-            var doc = await _events.UpdateItemAsync(docId, item);
+            var doc = await _events.CreateEventAsync(item);
             return doc.Id;
         }
 
-        public async Task ProcessMessage(Message message)
+        private async Task<string> UpdateWorkItem(string docId, WorkItem item)
         {
-            await Task.Delay(150);
+            var doc = await _events.UpdateEventAsync(docId, item);
+            return doc.Id;
+        }
+
+        private async Task ProcessMessageAsync(Message message)
+        {
+            await _messageProcessAction(message);
         }
     }
 }
