@@ -7,6 +7,8 @@
     <PackageReference Include="Microsoft.Azure.DocumentDB.Core" Version="1.7.1" />
     <PackageReference Include="Microsoft.Azure.WebJobs" Version="3.0.0-beta4" />
     <PackageReference Include="Microsoft.Azure.ServiceBus" Version="2.*" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="2.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="2.0.0" />
     <PackageReference Include="System.Configuration.ConfigurationManager" Version="4.4.1" />
   </ItemGroup>
   <ItemGroup>

@@ -1,5 +1,6 @@
 ﻿using Microsoft.Azure.CosmosDB.Table;
 using Microsoft.Azure.Storage;
+using Microsoft.Extensions.Configuration;
 using Microsoft.ServiceBus.Messaging;
 using System;
 using System.Collections.Generic;

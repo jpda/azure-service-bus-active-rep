@@ -20,13 +20,16 @@ namespace azure_service_bus_active_receiver_netcore_webjob
         [NoAutomaticTrigger]
         public static void Go()
         {
-            var builder = new ConfigurationBuilder().AddEnvironmentVariables();
+            var builder = new ConfigurationBuilder()
+                .SetBasePath(Environment.CurrentDirectory)
+                .AddJsonFile("appsettings.json", false)
+                .AddEnvironmentVariables();
             var config = builder.Build();
 
-            var primarySb = config["PrimaryServiceBusConnectionString"];
-            var secondarySb = config["SecondaryServiceBusConnectionString"];
-            var docStorage = config["DocumentDbEndpoint"];
-            var docKey = config["DocumentDbKey"];
+            var primarySb = config["ServiceBus:Primary"];
+            var secondarySb = config["ServiceBus:Secondary"];
+            var docStorage = config["DocumentDb:Endpoint"];
+            var docKey = config["DocumentDb:Key"];
 
             System.Diagnostics.Trace.Listeners.Add(new System.Diagnostics.TextWriterTraceListener(Console.Out));
             var docClient = new DocumentClient(new Uri(docStorage), docKey);
