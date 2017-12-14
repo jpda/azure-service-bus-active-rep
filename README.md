@@ -21,7 +21,7 @@ An example of one way to maintain consistency + availability of Azure Service Bu
 - Cosmos DB is in strong consistency mode
 
 ## todo
-- Switch from Session + Message journaling to just sessions, to prevent a race where messages are potentially processed out of order
+- Switch from Session + Message journaling to just sessions, to prevent a race where messages are potentially processed out of order within the same session (E.g., Session A, message 1 gets picked up, the session in region A is locked, but the session in region B is not; the _message_ is locked because we've logged the work item, but not message 2)
 - better docs
 - clean-up and refactor to be more flexible with events
 
